@@ -1,0 +1,171 @@
+/* assets/css/sgtm_puce.css */
+
+/* Paleta PUCE Ambato */
+:root {
+    --puce-azul-oscuro: #002f6c;
+    --puce-azul-medio:  #004f9e;
+    --puce-naranja:     #ff9f1c;
+    --puce-blanco:      #ffffff;
+}
+
+/* Fondo SOLO para dashboards (no login) */
+body:not(.login-body) {
+    background: radial-gradient(circle at top left, #004f9e, #002f6c);
+    margin: 0;
+}
+
+/* Navbar */
+.main-header .navbar {
+    background-color: var(--puce-azul-oscuro) !important;
+}
+
+/* Logo */
+.main-header .logo {
+    background-color: var(--puce-azul-oscuro) !important;
+    color: var(--puce-blanco) !important;
+}
+
+/* Sidebar */
+.main-sidebar {
+    background-color: var(--puce-azul-medio) !important;
+}
+
+/* Links del menú lateral */
+.sidebar-menu > li > a {
+    color: var(--puce-blanco);
+}
+
+.sidebar-menu > li.active > a,
+.sidebar-menu > li > a:hover {
+    background-color: var(--puce-naranja) !important;
+    color: #001f3f !important;
+}
+
+/* Tarjetas / cajas */
+.card-header.bg-puce {
+    background-color: var(--puce-azul-oscuro);
+    color: var(--puce-blanco);
+}
+
+.card-header.bg-naranja {
+    background-color: var(--puce-naranja);
+    color: #001f3f;
+}
+
+/* =========================
+   ESTILOS LOGIN SGTM
+   ========================= */
+
+html, body {
+    height: 100%;
+}
+
+/* El body del login controla todo el layout */
+body.login-body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background-color: #00296b !important;  /* azul PUCE */
+    background-image: none !important;
+    font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Barra superior */
+.login-header {
+    flex: 0 0 auto;
+    background-color: #00296b;
+    padding: 0.75rem 2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.login-header img {
+    height: 70px;
+    width: auto;
+    display: block;
+}
+
+.login-header-title {
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 1.2rem;
+    letter-spacing: 0.08em;
+}
+
+/* Zona central */
+.login-wrapper {
+    flex: 1 1 auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 1.5rem 0.75rem;
+}
+
+.login-card {
+    width: 100%;
+    max-width: 960px;
+    background-color: #ffffff;
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex-wrap: wrap;
+}
+
+/* Columna izquierda: formulario */
+.login-left {
+    flex: 1 1 380px;
+    padding: 2.5rem 2.5rem 2rem 2.5rem;
+}
+
+.login-subtitle {
+    color: #0082c6;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.login-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 1.25rem;
+}
+
+.login-input-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.login-left small {
+    color: #6c757d;
+}
+
+/* Columna derecha: imagen */
+.login-right {
+    flex: 1 1 320px;
+    background-image: url("../img/login_estudiantes.jpg");
+    background-size: cover;
+    background-position: center;
+}
+
+/* Footer inferior */
+.login-footer {
+    flex: 0 0 auto;
+    background-color: #001b4d;
+    color: #ffffff;
+    text-align: center;
+    padding: 0.6rem;
+    font-size: 0.85rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .login-card {
+        max-width: 480px;
+    }
+    .login-right {
+        display: none;
+    }
+}
