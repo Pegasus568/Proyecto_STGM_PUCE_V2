@@ -1,340 +1,380 @@
 <?php
-session_start();
-require_once 'config.php';
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+// ------------------------------------
 
-error_reporting(E_ALL & ~E_NOTICE & ~E_WARNING);
+require_once 'includes/auth.php';
+// tutorias.php
+require_once 'includes/auth.php';
+require_once 'includes/db.php';
 
-// Proteger acceso
-if (!isset($_SESSION['usuario_id'])) {
-    header("Location: login.php");
+$tituloPagina = "Gestión de Sesiones";
+$usuarioId = $_SESSION['usuario_id'];
+$rolUsuario = $_SESSION['usuario_rol'];
+$mensaje = "";
+$error = "";
+
+// --- 1. REGLA DE ÉTICA: ADMIN BLOQUEADO ---
+if ($rolUsuario === 'ADMIN') {
+    require_once 'includes/header.php';
+    echo '<div class="content-wrapper"><section class="content pt-4"><div class="alert alert-warning">
+            <h4><i class="icon fas fa-exclamation-triangle"></i> Acceso Restringido</h4>
+            Por políticas de ética y privacidad, la gestión de tutorías es exclusiva entre Docentes y Estudiantes.
+          </div></section></div>';
+    require_once 'includes/footer.php';
     exit;
 }
 
-$usuarioId   = $_SESSION['usuario_id'];
-$rolUsuario  = $_SESSION['usuario_rol'];
-$nombreUsuario = $_SESSION['usuario_nombre'];
+// --- 2. PROCESAR FORMULARIOS (POST) ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-$mensaje = "";
-$mensajeError = "";
-
-// Si el ADMIN crea una nueva tutoría
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $rolUsuario === 'ADMIN') {
-    $titulo       = trim($_POST['titulo'] ?? '');
-    $descripcion  = trim($_POST['descripcion'] ?? '');
-    $fecha        = $_POST['fecha'] ?? null;
-    $hora_inicio  = $_POST['hora_inicio'] ?? null;
-    $hora_fin     = $_POST['hora_fin'] ?? null;
-    $modalidad    = $_POST['modalidad'] ?? 'PRESENCIAL';
-    $lugar        = trim($_POST['lugar'] ?? '');
-    $id_tutor     = (int)($_POST['id_tutor'] ?? 0);
-    $id_estudiante= (int)($_POST['id_estudiante'] ?? 0);
-
-    if ($titulo === '' || !$fecha || !$id_tutor || !$id_estudiante) {
-        $mensajeError = "Título, fecha, tutor y estudiante son obligatorios.";
-    } else {
-        $stmt = $mysqli->prepare("
-            INSERT INTO tutorias (titulo, descripcion, fecha, hora_inicio, hora_fin,
-                                  modalidad, lugar, estado, id_tutor, id_estudiante)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'PROGRAMADA', ?, ?)
-        ");
-        $stmt->bind_param(
-            "sssssssii",
-            $titulo, $descripcion, $fecha, $hora_inicio, $hora_fin,
-            $modalidad, $lugar, $id_tutor, $id_estudiante
-        );
-        if ($stmt->execute()) {
-            $mensaje = "Tutoría registrada correctamente.";
-        } else {
-            $mensajeError = "Error al guardar: " . $stmt->error;
+    // A) SOLICITAR NUEVA SESIÓN (Ambos roles)
+    if (isset($_POST['accion']) && $_POST['accion'] === 'solicitar') {
+        $titulo = trim($_POST['titulo']);
+        $tipo = $_POST['tipo']; // TUTORIA o MENTORIA
+        $fecha = $_POST['fecha'];
+        $hora_inicio = $_POST['hora_inicio'];
+        $hora_fin = $_POST['hora_fin'];
+        $modalidad = $_POST['modalidad'];
+        $lugar = trim($_POST['lugar']);
+        
+        // Determinar quién es el tutor y quién el estudiante según quién esté logueado
+        if ($rolUsuario === 'DOCENTE') {
+            $id_tutor = $usuarioId;
+            $id_estudiante = $_POST['id_contraparte']; // El docente elige al estudiante
+        } else { // ESTUDIANTE
+            $id_estudiante = $usuarioId;
+            $id_tutor = $_POST['id_contraparte']; // El estudiante elige al docente
         }
-        $stmt->close();
+
+        try {
+            $sql = "INSERT INTO tutorias 
+                    (solicitado_por, tipo, tutor_id, estudiante_id, titulo, fecha, hora_inicio, hora_fin, modalidad, lugar, estado, created_at) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', NOW())";
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute([$usuarioId, $tipo, $id_tutor, $id_estudiante, $titulo, $fecha, $hora_inicio, $hora_fin, $modalidad, $lugar]);
+            $mensaje = "Solicitud de " . strtolower($tipo) . " enviada correctamente.";
+        } catch (Exception $e) {
+            $error = "Error al solicitar: " . $e->getMessage();
+        }
+    }
+
+    // B) RESPONDER SOLICITUD (Aceptar o Rechazar)
+    if (isset($_POST['accion']) && in_array($_POST['accion'], ['confirmar', 'rechazar'])) {
+        $tutoria_id = $_POST['tutoria_id'];
+        $nuevo_estado = ($_POST['accion'] === 'confirmar') ? 'CONFIRMADA' : 'RECHAZADA';
+        $motivo = ($_POST['accion'] === 'rechazar') ? trim($_POST['motivo_rechazo']) : null;
+
+        if ($nuevo_estado === 'RECHAZADA' && empty($motivo)) {
+            $error = "Es obligatorio indicar el motivo del rechazo.";
+        } else {
+            // Validar que la tutoría me pertenezca (seguridad)
+            $sqlCheck = "SELECT id FROM tutorias WHERE id = ? AND (tutor_id = ? OR estudiante_id = ?)";
+            $stmtCheck = $pdo->prepare($sqlCheck);
+            $stmtCheck->execute([$tutoria_id, $usuarioId, $usuarioId]);
+            
+            if ($stmtCheck->fetch()) {
+                $upd = $pdo->prepare("UPDATE tutorias SET estado = ?, motivo_rechazo = ?, updated_at = NOW() WHERE id = ?");
+                $upd->execute([$nuevo_estado, $motivo, $tutoria_id]);
+                $mensaje = "La sesión ha sido " . strtolower($nuevo_estado) . ".";
+            } else {
+                $error = "No tienes permiso para gestionar esta solicitud.";
+            }
+        }
     }
 }
 
-// Listas de usuarios para combos (solo ADMIN necesita esto)
-$docentes = [];
-$estudiantes = [];
-if ($rolUsuario === 'ADMIN') {
-    $resDoc = $mysqli->query("SELECT id, nombre FROM usuarios WHERE rol='DOCENTE' AND estado='ACTIVO' ORDER BY nombre");
-    while ($row = $resDoc->fetch_assoc()) {
-        $docentes[] = $row;
-    }
-    $resEst = $mysqli->query("SELECT id, nombre FROM usuarios WHERE rol='ESTUDIANTE' AND estado='ACTIVO' ORDER BY nombre");
-    while ($row = $resEst->fetch_assoc()) {
-        $estudiantes[] = $row;
-    }
-}
+// --- 3. PREPARAR DATOS PARA LA VISTA ---
 
-// Tutorías a mostrar según rol
-if ($rolUsuario === 'ADMIN') {
-    $sqlTutorias = "
-        SELECT t.*, 
-               u1.nombre AS nombre_tutor,
-               u2.nombre AS nombre_estudiante
-        FROM tutorias t
-        LEFT JOIN usuarios u1 ON t.id_tutor = u1.id
-        LEFT JOIN usuarios u2 ON t.id_estudiante = u2.id
-        ORDER BY t.fecha DESC, t.hora_inicio DESC
-    ";
-} elseif ($rolUsuario === 'DOCENTE') {
-    $sqlTutorias = "
-        SELECT t.*, 
-               u1.nombre AS nombre_tutor,
-               u2.nombre AS nombre_estudiante
-        FROM tutorias t
-        LEFT JOIN usuarios u1 ON t.id_tutor = u1.id
-        LEFT JOIN usuarios u2 ON t.id_estudiante = u2.id
-        WHERE t.id_tutor = {$usuarioId}
-        ORDER BY t.fecha DESC, t.hora_inicio DESC
-    ";
-} else { // ESTUDIANTE
-    $sqlTutorias = "
-        SELECT t.*, 
-               u1.nombre AS nombre_tutor,
-               u2.nombre AS nombre_estudiante
-        FROM tutorias t
-        LEFT JOIN usuarios u1 ON t.id_tutor = u1.id
-        LEFT JOIN usuarios u2 ON t.id_estudiante = u2.id
-        WHERE t.id_estudiante = {$usuarioId}
-        ORDER BY t.fecha DESC, t.hora_inicio DESC
-    ";
+// Cargar lista de usuarios para el select (La contraparte)
+$listaUsuarios = [];
+if ($rolUsuario === 'DOCENTE') {
+    // Si soy docente, busco estudiantes
+    $stmtUsers = $pdo->query("SELECT id, nombre FROM usuarios WHERE rol = 'ESTUDIANTE' AND estado = 'ACTIVO' ORDER BY nombre");
+} else {
+    // Si soy estudiante, busco docentes
+    $stmtUsers = $pdo->query("SELECT id, nombre FROM usuarios WHERE rol = 'DOCENTE' AND estado = 'ACTIVO' ORDER BY nombre");
 }
+$listaUsuarios = $stmtUsers->fetchAll();
 
-$resTutorias = $mysqli->query($sqlTutorias);
+// Cargar mis tutorias
+$sql = "SELECT t.*, 
+        doc.nombre as nombre_tutor, 
+        est.nombre as nombre_estudiante 
+        FROM tutorias t
+        JOIN usuarios doc ON t.tutor_id = doc.id
+        JOIN usuarios est ON t.estudiante_id = est.id
+        WHERE t.deleted_at IS NULL 
+        AND (t.tutor_id = ? OR t.estudiante_id = ?)
+        ORDER BY t.fecha DESC, t.hora_inicio ASC";
+$stmt = $pdo->prepare($sql);
+$stmt->execute([$usuarioId, $usuarioId]);
+$tutorias = $stmt->fetchAll();
+
+require_once 'includes/header.php'; 
 ?>
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Tutorías - SGTM PUCE Ambato</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <link rel="stylesheet" href="adminlte/plugins/fontawesome-free/css/all.min.css">
-    <link rel="stylesheet" href="adminlte/dist/css/adminlte.min.css">
-    <link rel="stylesheet" href="assets/css/sgtm_puce.css">
-</head>
-<body class="hold-transition sidebar-mini layout-fixed">
-<div class="wrapper">
-
-    <!-- Navbar -->
-    <nav class="main-header navbar navbar-expand navbar-dark">
-        <ul class="navbar-nav">
-            <li class="nav-item">
-                <a class="nav-link" data-widget="pushmenu" href="#" role="button">
-                    <i class="fas fa-bars"></i>
-                </a>
-            </li>
-            <li class="nav-item d-none d-sm-inline-block">
-                <span class="nav-link font-weight-bold">SGTM - PUCE Ambato</span>
-            </li>
-            <li class="nav-item d-none d-sm-inline-block">
-                <span class="nav-link">
-                    <?php echo htmlspecialchars($nombreUsuario . " (" . $rolUsuario . ")"); ?>
-                </span>
-            </li>
-        </ul>
-    </nav>
-
-    <!-- Sidebar -->
-    <aside class="main-sidebar sidebar-dark-primary elevation-4">
-        <a href="index.php" class="brand-link">
-            <span class="brand-text font-weight-light">PUCE | AMBATO</span>
-        </a>
-
-        <div class="sidebar">
-            <nav class="mt-2">
-                <ul class="nav nav-pills nav-sidebar flex-column" data-widget="treeview" role="menu">
-
-                    <li class="nav-item">
-                        <a href="index.php" class="nav-link">
-                            <i class="nav-icon fas fa-tachometer-alt"></i>
-                            <p>Dashboard</p>
-                        </a>
-                    </li>
-
-                    <li class="nav-header">MÓDULOS SGTM</li>
-
-                    <li class="nav-item">
-                        <a href="usuarios.php" class="nav-link">
-                            <i class="nav-icon fas fa-users"></i>
-                            <p>Usuarios</p>
-                        </a>
-                    </li>
-
-                    <li class="nav-item">
-                        <a href="tutorias.php" class="nav-link active">
-                            <i class="nav-icon fas fa-user-graduate"></i>
-                            <p>Tutorías</p>
-                        </a>
-                    </li>
-
-                    <li class="nav-item">
-                        <a href="#" class="nav-link">
-                            <i class="nav-icon fas fa-chart-bar"></i>
-                            <p>Reportes</p>
-                        </a>
-                    </li>
-
-                    <li class="nav-item">
-                        <a href="logout.php" class="nav-link">
-                            <i class="nav-icon fas fa-sign-out-alt"></i>
-                            <p>Cerrar sesión</p>
-                        </a>
-                    </li>
-
-                </ul>
-            </nav>
+<div class="content-header">
+    <div class="container-fluid">
+        <div class="row mb-2">
+            <div class="col-sm-6">
+                <h1 class="m-0">Mis Tutorías y Mentorías</h1>
+            </div>
+            <div class="col-sm-6 text-right">
+                <button type="button" class="btn btn-primary" data-toggle="modal" data-target="#modalSolicitar">
+                    <i class="fas fa-plus-circle mr-2"></i>Solicitar Nueva
+                </button>
+            </div>
         </div>
-    </aside>
-
-    <!-- Contenido -->
-    <div class="content-wrapper">
-        <section class="content-header">
-            <div class="container-fluid">
-                <h1>Tutorías</h1>
-                <p class="text-muted">
-                    Gestión y seguimiento de sesiones de tutoría académica.
-                </p>
-            </div>
-        </section>
-
-        <section class="content">
-            <div class="container-fluid">
-
-                <?php if ($mensaje): ?>
-                    <div class="alert alert-success"><?php echo htmlspecialchars($mensaje); ?></div>
-                <?php endif; ?>
-
-                <?php if ($mensajeError): ?>
-                    <div class="alert alert-danger"><?php echo htmlspecialchars($mensajeError); ?></div>
-                <?php endif; ?>
-
-                <!-- SOLO ADMIN puede crear nuevas tutorías -->
-                <?php if ($rolUsuario === 'ADMIN'): ?>
-                <div class="card">
-                    <div class="card-header bg-puce">
-                        <h3 class="card-title">Nueva Tutoría</h3>
-                    </div>
-                    <div class="card-body">
-                        <form method="post">
-                            <div class="form-row">
-                                <div class="form-group col-md-6">
-                                    <label>Título *</label>
-                                    <input type="text" name="titulo" class="form-control" required>
-                                </div>
-                                <div class="form-group col-md-3">
-                                    <label>Fecha *</label>
-                                    <input type="date" name="fecha" class="form-control" required>
-                                </div>
-                                <div class="form-group col-md-3">
-                                    <label>Modalidad</label>
-                                    <select name="modalidad" class="form-control">
-                                        <option value="PRESENCIAL">Presencial</option>
-                                        <option value="VIRTUAL">Virtual</option>
-                                        <option value="HIBRIDA">Híbrida</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="form-row">
-                                <div class="form-group col-md-3">
-                                    <label>Hora inicio</label>
-                                    <input type="time" name="hora_inicio" class="form-control">
-                                </div>
-                                <div class="form-group col-md-3">
-                                    <label>Hora fin</label>
-                                    <input type="time" name="hora_fin" class="form-control">
-                                </div>
-                                <div class="form-group col-md-6">
-                                    <label>Lugar / enlace</label>
-                                    <input type="text" name="lugar" class="form-control" placeholder="Aula 201, Zoom, Teams...">
-                                </div>
-                            </div>
-
-                            <div class="form-row">
-                                <div class="form-group col-md-6">
-                                    <label>Tutor *</label>
-                                    <select name="id_tutor" class="form-control" required>
-                                        <option value="">Seleccione...</option>
-                                        <?php foreach ($docentes as $d): ?>
-                                            <option value="<?php echo $d['id']; ?>">
-                                                <?php echo htmlspecialchars($d['nombre']); ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                                <div class="form-group col-md-6">
-                                    <label>Estudiante *</label>
-                                    <select name="id_estudiante" class="form-control" required>
-                                        <option value="">Seleccione...</option>
-                                        <?php foreach ($estudiantes as $e): ?>
-                                            <option value="<?php echo $e['id']; ?>">
-                                                <?php echo htmlspecialchars($e['nombre']); ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label>Descripción / objetivos de la tutoría</label>
-                                <textarea name="descripcion" class="form-control" rows="3"></textarea>
-                            </div>
-
-                            <button type="submit" class="btn btn-primary">Guardar tutoría</button>
-                        </form>
-                    </div>
-                </div>
-                <?php endif; ?>
-
-                <!-- Listado de tutorías -->
-                <div class="card">
-                    <div class="card-header bg-naranja">
-                        <h3 class="card-title">Listado de Tutorías</h3>
-                    </div>
-                    <div class="card-body table-responsive p-0">
-                        <table class="table table-hover">
-                            <thead>
-                            <tr>
-                                <th>Fecha</th>
-                                <th>Hora</th>
-                                <th>Título</th>
-                                <th>Tutor</th>
-                                <th>Estudiante</th>
-                                <th>Modalidad</th>
-                                <th>Lugar</th>
-                                <th>Estado</th>
-                            </tr>
-                            </thead>
-                            <tbody>
-                            <?php while ($t = $resTutorias->fetch_assoc()): ?>
-                                <tr>
-                                    <td><?php echo htmlspecialchars($t['fecha']); ?></td>
-                                    <td><?php echo htmlspecialchars(($t['hora_inicio'] ?? '') . ' - ' . ($t['hora_fin'] ?? '')); ?></td>
-                                    <td><?php echo htmlspecialchars($t['titulo']); ?></td>
-                                    <td><?php echo htmlspecialchars($t['nombre_tutor']); ?></td>
-                                    <td><?php echo htmlspecialchars($t['nombre_estudiante']); ?></td>
-                                    <td><?php echo htmlspecialchars($t['modalidad']); ?></td>
-                                    <td><?php echo htmlspecialchars($t['lugar']); ?></td>
-                                    <td><?php echo htmlspecialchars($t['estado']); ?></td>
-                                </tr>
-                            <?php endwhile; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-            </div>
-        </section>
     </div>
-
-    <footer class="main-footer text-center">
-        <strong>PUCE Ambato</strong> · SGTM · <?php echo date('Y'); ?>
-    </footer>
 </div>
 
-<script src="adminlte/plugins/jquery/jquery.min.js"></script>
-<script src="adminlte/plugins/bootstrap/js/bootstrap.bundle.min.js"></script>
-<script src="adminlte/dist/js/adminlte.min.js"></script>
-</body>
-</html>
+<div class="content">
+    <div class="container-fluid">
+        
+        <?php if($mensaje): ?>
+            <div class="alert alert-success alert-dismissible fade show">
+                <i class="fas fa-check-circle mr-2"></i><?php echo $mensaje; ?>
+                <button type="button" class="close" data-dismiss="alert">&times;</button>
+            </div>
+        <?php endif; ?>
+        
+        <?php if($error): ?>
+            <div class="alert alert-danger alert-dismissible fade show">
+                <i class="fas fa-exclamation-circle mr-2"></i><?php echo $error; ?>
+                <button type="button" class="close" data-dismiss="alert">&times;</button>
+            </div>
+        <?php endif; ?>
+
+        <div class="card card-outline card-primary">
+            <div class="card-body table-responsive p-0">
+                <table class="table table-hover text-nowrap">
+                    <thead class="bg-light">
+                        <tr>
+                            <th>Estado</th>
+                            <th>Tipo</th>
+                            <th>Fecha / Hora</th>
+                            <th>Título / Tema</th>
+                            <th>Con quién</th>
+                            <th>Modalidad</th>
+                            <th class="text-right">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (count($tutorias) > 0): ?>
+                            <?php foreach($tutorias as $t): ?>
+                            <tr>
+                                <td>
+                                    <?php 
+                                    $badge = 'secondary';
+                                    $txtEstado = $t['estado'];
+                                    
+                                    if($t['estado']=='PENDIENTE') {
+                                        $badge = 'warning';
+                                        $txtEstado = '<i class="fas fa-clock mr-1"></i> Pendiente';
+                                    }
+                                    if($t['estado']=='CONFIRMADA') {
+                                        $badge = 'success';
+                                        $txtEstado = '<i class="fas fa-check mr-1"></i> Confirmada';
+                                    }
+                                    if($t['estado']=='RECHAZADA') $badge = 'danger';
+                                    
+                                    echo "<span class='badge badge-{$badge} p-2'>{$txtEstado}</span>";
+                                    ?>
+                                </td>
+                                
+                                <td><span class="text-muted font-weight-bold"><?php echo $t['tipo']; ?></span></td>
+
+                                <td>
+                                    <?php echo date('d/m/Y', strtotime($t['fecha'])); ?> <br>
+                                    <small class="text-muted"><?php echo substr($t['hora_inicio'],0,5) . ' - ' . substr($t['hora_fin'],0,5); ?></small>
+                                </td>
+
+                                <td>
+                                    <strong><?php echo htmlspecialchars($t['titulo']); ?></strong>
+                                    <?php if($t['estado'] == 'RECHAZADA'): ?>
+                                        <div class="text-danger small mt-1">
+                                            <strong>Motivo:</strong> <?php echo htmlspecialchars($t['motivo_rechazo']); ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </td>
+
+                                <td>
+                                    <?php 
+                                    // Mostrar el nombre de la OTRA persona
+                                    $nombreContraparte = ($rolUsuario === 'DOCENTE') ? $t['nombre_estudiante'] : $t['nombre_tutor'];
+                                    echo htmlspecialchars($nombreContraparte); 
+                                    ?>
+                                </td>
+                                
+                                <td><?php echo $t['modalidad']; ?><br><small><?php echo htmlspecialchars($t['lugar']); ?></small></td>
+
+                                <td class="text-right">
+                                    <?php if($t['estado'] === 'PENDIENTE'): ?>
+                                        <?php if($t['solicitado_por'] == $usuarioId): ?>
+                                            <span class="text-muted small font-italic">Esperando respuesta...</span>
+                                        <?php else: ?>
+                                            <form method="POST" style="display:inline;">
+                                                <input type="hidden" name="accion" value="confirmar">
+                                                <input type="hidden" name="tutoria_id" value="<?php echo $t['id']; ?>">
+                                                <button type="submit" class="btn btn-sm btn-success" title="Aceptar">
+                                                    <i class="fas fa-check"></i>
+                                                </button>
+                                            </form>
+
+                                            <button type="button" class="btn btn-sm btn-danger btn-rechazar" 
+                                                    data-id="<?php echo $t['id']; ?>" 
+                                                    data-titulo="<?php echo htmlspecialchars($t['titulo']); ?>"
+                                                    data-toggle="modal" data-target="#modalRechazar" title="Rechazar">
+                                                <i class="fas fa-times"></i>
+                                            </button>
+                                        <?php endif; ?>
+                                    <?php else: ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr><td colspan="7" class="text-center text-muted py-4">No tienes sesiones registradas.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modalSolicitar">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary">
+                <h5 class="modal-title">Solicitar Nueva Sesión</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <form method="POST">
+                <div class="modal-body">
+                    <input type="hidden" name="accion" value="solicitar">
+                    
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="form-group">
+                                <label>Título / Tema a tratar *</label>
+                                <input type="text" name="titulo" class="form-control" required placeholder="Ej: Revisión de tesis, Dudas clase 4...">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label>Tipo *</label>
+                                <select name="tipo" class="form-control">
+                                    <option value="TUTORIA">Tutoría Académica</option>
+                                    <option value="MENTORIA">Mentoría</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <?php echo ($rolUsuario === 'DOCENTE') ? 'Estudiante a citar:' : 'Docente solicitado:'; ?> *
+                        </label>
+                        <select name="id_contraparte" class="form-control" required>
+                            <option value="">Seleccione...</option>
+                            <?php foreach($listaUsuarios as $u): ?>
+                                <option value="<?php echo $u['id']; ?>"><?php echo htmlspecialchars($u['nombre']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label>Fecha *</label>
+                                <input type="date" name="fecha" class="form-control" required>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label>Hora Inicio *</label>
+                                <input type="time" name="hora_inicio" class="form-control" required>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label>Hora Fin *</label>
+                                <input type="time" name="hora_fin" class="form-control" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label>Modalidad</label>
+                                <select name="modalidad" class="form-control">
+                                    <option value="PRESENCIAL">Presencial</option>
+                                    <option value="VIRTUAL">Virtual</option>
+                                    <option value="HIBRIDA">Híbrida</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label>Lugar / Enlace</label>
+                                <input type="text" name="lugar" class="form-control" placeholder="Aula, Oficina o Link Zoom">
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+                <div class="modal-footer justify-content-between">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Enviar Solicitud</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modalRechazar">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger">
+                <h5 class="modal-title">Rechazar Solicitud</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <form method="POST">
+                <div class="modal-body">
+                    <input type="hidden" name="accion" value="rechazar">
+                    <input type="hidden" name="tutoria_id" id="rechazo_id">
+                    
+                    <p>Vas a rechazar la sesión: <strong id="rechazo_titulo"></strong></p>
+                    
+                    <div class="form-group">
+                        <label>Motivo obligatorio *</label>
+                        <textarea name="motivo_rechazo" class="form-control" rows="3" required placeholder="Indique la razón (cruce de horarios, enfermedad, etc.)"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer justify-content-between">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-danger">Confirmar Rechazo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<?php require_once 'includes/footer.php'; ?>
+
+<script>
+    $(document).ready(function() {
+        // Pasar datos al modal de rechazo dinámicamente
+        $('.btn-rechazar').click(function() {
+            var id = $(this).data('id');
+            var titulo = $(this).data('titulo');
+            $('#rechazo_id').val(id);
+            $('#rechazo_titulo').text(titulo);
+        });
+    });
+</script>
