@@ -1,113 +1,139 @@
 <?php
-// index.php
-// 1. Activar reporte de errores para depuración inmediata
+// index.php - TABLERO PRINCIPAL (DASHBOARD)
+// ---------------------------------------------------------
+
+// 1. Configuración de errores (Útil para desarrollo)
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-// 2. Incluir archivos esenciales
+// 2. Autenticación
 require_once 'includes/auth.php';
-require_once 'includes/db.php'; // Asegúrate de que este archivo tenga la conexión $pdo correcta
 
-// Inicializar contadores en 0 por seguridad
+// --- LÓGICA DE REDIRECCIÓN POR ROL ---
+// El Dashboard es solo para Administradores. 
+// Docentes y Estudiantes van directo a su agenda.
+if (in_array($_SESSION['usuario_rol'], ['DOCENTE', 'ESTUDIANTE'])) {
+    header("Location: tutorias.php");
+    exit;
+}
+// -------------------------------------
+
+// 3. Conexión a Base de Datos
+require_once 'includes/db.php';
+
+// 4. Inicializar contadores
 $totalUsuarios = 0;
 $totalTutorias = 0;
 $totalReportes = 0;
-$errorBD = "";
+$errorDb = "";
 
+// 5. Obtener Estadísticas (Solo para Admin)
 try {
-    // 3. Consultas seguras (Verificamos si existen datos)
-    
-    // Usuarios
-    $sqlUser = "SELECT COUNT(*) FROM usuarios WHERE estado = 'ACTIVO'";
-    // Truco: Si la columna deleted_at existe, la usamos. Si no, ignoramos para que no de error 500.
-    $checkCol = $pdo->query("SHOW COLUMNS FROM usuarios LIKE 'deleted_at'");
-    if($checkCol->fetch()) {
-        $sqlUser .= " AND deleted_at IS NULL";
-    }
-    $totalUsuarios = $pdo->query($sqlUser)->fetchColumn();
+    // Contar Usuarios Activos (excluyendo eliminados)
+    $stmt = $pdo->query("SELECT COUNT(*) FROM usuarios WHERE estado = 'ACTIVO' AND deleted_at IS NULL");
+    $totalUsuarios = $stmt->fetchColumn();
 
-    // Tutorías
-    $sqlTut = "SELECT COUNT(*) FROM tutorias WHERE 1=1"; // 1=1 permite concatenar ANDs fácil
-    $checkColT = $pdo->query("SHOW COLUMNS FROM tutorias LIKE 'deleted_at'");
-    if($checkColT->fetch()) {
-        $sqlTut .= " AND deleted_at IS NULL";
-    }
-    $totalTutorias = $pdo->query($sqlTut)->fetchColumn();
-    
-    // Reportes
-    $sqlRep = "SELECT COUNT(*) FROM reportes";
-    $totalReportes = $pdo->query($sqlRep)->fetchColumn();
+    // Contar Tutorías/Mentorías Programadas (futuras)
+    $stmt = $pdo->query("SELECT COUNT(*) FROM tutorias WHERE estado = 'PROGRAMADA' AND deleted_at IS NULL");
+    $totalTutorias = $stmt->fetchColumn();
+
+    // Contar Reportes Generados
+    $stmt = $pdo->query("SELECT COUNT(*) FROM reportes WHERE deleted_at IS NULL");
+    $totalReportes = $stmt->fetchColumn();
 
 } catch (PDOException $e) {
-    // Si falla algo, capturamos el error en esta variable en lugar de romper la página
-    $errorBD = "Error de conexión o consulta: " . $e->getMessage();
+    // Si falla la BD, no rompemos la página, solo mostramos 0 y guardamos el error
+    $errorDb = $e->getMessage();
 }
 
+// 6. Cargar la Vista (Header)
 $tituloPagina = "Tablero Principal";
 require_once 'includes/header.php';
 ?>
 
-<?php if($errorBD): ?>
-<div class="alert alert-danger">
-    <h5><i class="icon fas fa-ban"></i> Error Crítico</h5>
-    <?php echo $errorBD; ?>
-</div>
-<?php endif; ?>
-
-<div class="row">
-    <div class="col-lg-4 col-6">
-        <div class="small-box bg-info">
-            <div class="inner">
-                <h3><?php echo $totalUsuarios; ?></h3>
-                <p>Usuarios Activos</p>
-            </div>
-            <div class="icon">
-                <i class="fas fa-users"></i>
-            </div>
-            <a href="usuarios.php" class="small-box-footer">Ver detalle <i class="fas fa-arrow-circle-right"></i></a>
-        </div>
-    </div>
-
-    <div class="col-lg-4 col-6">
-        <div class="small-box bg-success">
-            <div class="inner">
-                <h3><?php echo $totalTutorias; ?></h3>
-                <p>Sesiones Totales</p>
-            </div>
-            <div class="icon">
-                <i class="fas fa-calendar-check"></i>
-            </div>
-            <a href="tutorias.php" class="small-box-footer">Ir a agenda <i class="fas fa-arrow-circle-right"></i></a>
-        </div>
-    </div>
-
-    <div class="col-lg-4 col-6">
-        <div class="small-box bg-warning">
-            <div class="inner">
-                <h3><?php echo $totalReportes; ?></h3>
-                <p>Documentos</p>
-            </div>
-            <div class="icon">
-                <i class="fas fa-file-contract"></i>
-            </div>
-            <a href="reportes.php" class="small-box-footer">Ver historial <i class="fas fa-arrow-circle-right"></i></a>
-        </div>
-    </div>
-</div>
-
-<div class="row">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header border-0">
-                <h3 class="card-title">Bienvenido al Sistema SGTM</h3>
-            </div>
-            <div class="card-body">
-                <p>Hola <strong><?php echo htmlspecialchars($_SESSION['usuario_nombre'] ?? 'Usuario'); ?></strong>,</p>
-                <p>Bienvenido al Sistema de Gestión de Tutorías y Mentorías de la PUCE Ambato.</p>
+<div class="content-header">
+    <div class="container-fluid">
+        <div class="row mb-2">
+            <div class="col-sm-6">
+                <h1 class="m-0">Resumen del Sistema</h1>
             </div>
         </div>
     </div>
 </div>
 
-<?php require_once 'includes/footer.php'; ?>
+<section class="content">
+    <div class="container-fluid">
+        
+        <?php if($errorDb): ?>
+        <div class="alert alert-warning alert-dismissible">
+            <button type="button" class="close" data-dismiss="alert">&times;</button>
+            <h5><i class="icon fas fa-exclamation-triangle"></i> Alerta de Base de Datos</h5>
+            No se pudieron cargar las estadísticas: <?php echo $errorDb; ?>
+        </div>
+        <?php endif; ?>
+
+        <div class="row">
+            
+            <div class="col-lg-4 col-6">
+                <div class="small-box bg-info">
+                    <div class="inner">
+                        <h3><?php echo $totalUsuarios; ?></h3>
+                        <p>Usuarios Activos</p>
+                    </div>
+                    <div class="icon">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <a href="usuarios.php" class="small-box-footer">Administrar Usuarios <i class="fas fa-arrow-circle-right"></i></a>
+                </div>
+            </div>
+            
+            <div class="col-lg-4 col-6">
+                <div class="small-box bg-success">
+                    <div class="inner">
+                        <h3><?php echo $totalTutorias; ?></h3>
+                        <p>Sesiones Programadas</p>
+                    </div>
+                    <div class="icon">
+                        <i class="fas fa-calendar-alt"></i>
+                    </div>
+                    <a href="tutorias.php" class="small-box-footer">Ver Agenda Global <i class="fas fa-arrow-circle-right"></i></a>
+                </div>
+            </div>
+
+            <div class="col-lg-4 col-6">
+                <div class="small-box bg-warning">
+                    <div class="inner">
+                        <h3><?php echo $totalReportes; ?></h3>
+                        <p>Documentos Generados</p>
+                    </div>
+                    <div class="icon">
+                        <i class="fas fa-file-contract"></i>
+                    </div>
+                    <a href="reportes.php" class="small-box-footer">Ver Archivo <i class="fas fa-arrow-circle-right"></i></a>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header border-0">
+                        <h3 class="card-title text-primary"><i class="fas fa-university mr-1"></i> SGTM - PUCE Ambato</h3>
+                    </div>
+                    <div class="card-body">
+                        <h4>Bienvenido, <strong><?php echo htmlspecialchars($_SESSION['usuario_nombre']); ?></strong></h4>
+                        <p class="lead">
+                            Estás en el panel de administración. Desde aquí puedes tener una vista general del uso de la plataforma.
+                            Utiliza el menú lateral para gestionar usuarios, revisar la agenda global de tutorías o consultar el historial de reportes.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div></section>
+<?php
+// 7. Cargar el pie de página (Scripts y cierre de HTML)
+require_once 'includes/footer.php';
+?>

@@ -1,16 +1,27 @@
 <?php
-require_once 'config.php';
-session_start();
-if (!isset($_SESSION['usuario_id']) || $_SESSION['usuario_rol'] !== 'ADMIN') {
-    http_response_code(403);
-    echo json_encode([]);
-    exit;
+// reportes_stats.php
+// Devuelve JSON para las gráficas
+header('Content-Type: application/json');
+require_once 'includes/auth.php'; // Solo usuarios logueados
+require_once 'includes/db.php';
+
+$data = [
+    'labels' => [],
+    'counts' => []
+];
+
+try {
+    // Contar reportes por tipo
+    $sql = "SELECT tipo, COUNT(*) as total FROM reportes WHERE deleted_at IS NULL GROUP BY tipo";
+    $stmt = $pdo->query($sql);
+    
+    while($row = $stmt->fetch()) {
+        $data['labels'][] = $row['tipo'];
+        $data['counts'][] = (int)$row['total'];
+    }
+} catch (Exception $e) {
+    // En caso de error devolvemos arrays vacíos para no romper el JS
 }
 
-$res = $mysqli->query("SELECT tipo, COUNT(*) AS c FROM reportes GROUP BY tipo");
-$labels = []; $counts = [];
-while($row = $res->fetch_assoc()) {
-    $labels[] = $row['tipo'];
-    $counts[] = (int)$row['c'];
-}
-echo json_encode(['labels'=>$labels,'counts'=>$counts]);
+echo json_encode($data);
+?>
