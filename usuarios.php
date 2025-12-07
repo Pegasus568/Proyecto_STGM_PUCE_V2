@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/auth.php';
 require_once 'includes/db.php';
+
 if ($_SESSION['usuario_rol'] !== 'ADMIN') { header("Location: index.php"); exit; }
 
 $tituloPagina = "Gestión de Usuarios";
@@ -8,18 +9,35 @@ $mensaje = $_SESSION['flash_mensaje'] ?? "";
 $tipoMsg = $_SESSION['flash_tipo'] ?? "info";
 unset($_SESSION['flash_mensaje'], $_SESSION['flash_tipo']);
 
+// Cargar Carreras
 $carreras = $pdo->query("SELECT id, nombre FROM carreras WHERE estado = 1 ORDER BY nombre")->fetchAll();
-$sql = "SELECT u.*, c.nombre as nombre_carrera FROM usuarios u LEFT JOIN carreras c ON u.carrera_id = c.id WHERE u.deleted_at IS NULL ORDER BY u.id DESC";
+
+// Listar Usuarios Activos
+$sql = "SELECT u.*, c.nombre as nombre_carrera 
+        FROM usuarios u 
+        LEFT JOIN carreras c ON u.carrera_id = c.id 
+        WHERE u.deleted_at IS NULL 
+        ORDER BY u.id DESC";
 $usuarios = $pdo->query($sql)->fetchAll();
 
 require_once 'includes/header.php'; 
 ?>
 
-<div class="content-header"><div class="container-fluid"><h1>Usuarios</h1></div></div>
+<div class="content-header">
+    <div class="container-fluid">
+        <div class="row mb-2">
+            <div class="col-sm-6"><h1>Usuarios del Sistema</h1></div>
+        </div>
+    </div>
+</div>
 
 <div class="content">
     <div class="container-fluid">
-        <?php if($mensaje): ?><div class="alert alert-<?php echo $tipoMsg; ?>"><?php echo $mensaje; ?></div><?php endif; ?>
+        <?php if($mensaje): ?>
+            <div class="alert alert-<?php echo $tipoMsg; ?> alert-dismissible fade show">
+                <?php echo $mensaje; ?><button class="close" data-dismiss="alert">&times;</button>
+            </div>
+        <?php endif; ?>
 
         <div class="row">
             <div class="col-md-4">
@@ -28,12 +46,13 @@ require_once 'includes/header.php';
                     <form action="controllers/usuarios_controller.php" method="POST">
                         <div class="card-body">
                             <input type="hidden" name="accion" value="crear">
-                            <div class="form-group"><label>Nombre</label><input type="text" name="nombre" class="form-control" required></div>
-                            <div class="form-group"><label>Correo</label><input type="email" name="correo" class="form-control" required></div>
+                            
+                            <div class="form-group"><label>Nombre *</label><input type="text" name="nombre" class="form-control" required></div>
+                            <div class="form-group"><label>Correo *</label><input type="email" name="correo" class="form-control" required></div>
                             <div class="form-group"><label>Cédula</label><input type="text" name="cedula" class="form-control"></div>
                             
                             <div class="form-group">
-                                <label>Rol</label>
+                                <label>Rol *</label>
                                 <select name="rol" id="create_rol" class="form-control" onchange="toggleFields('create')">
                                     <option value="ESTUDIANTE">Estudiante</option>
                                     <option value="DOCENTE">Docente</option>
@@ -56,7 +75,7 @@ require_once 'includes/header.php';
                                 </div>
                             </div>
 
-                            <div class="form-group"><label>Contraseña</label><input type="password" name="password" class="form-control" required></div>
+                            <div class="form-group"><label>Contraseña *</label><input type="password" name="password" class="form-control" required></div>
                         </div>
                         <div class="card-footer"><button class="btn btn-primary btn-block">Crear</button></div>
                     </form>
@@ -64,18 +83,37 @@ require_once 'includes/header.php';
             </div>
 
             <div class="col-md-8">
-                <div class="card">
+                <div class="card card-outline card-info">
                     <div class="card-body table-responsive p-0">
-                        <table class="table table-hover">
+                        <table class="table table-hover text-nowrap">
                             <thead><tr><th>Nombre</th><th>Rol</th><th>Académico</th><th>Acción</th></tr></thead>
                             <tbody>
                                 <?php foreach($usuarios as $u): ?>
                                 <tr>
-                                    <td><?php echo htmlspecialchars($u['nombre']); ?><br><small><?php echo $u['correo']; ?></small></td>
-                                    <td><?php echo $u['rol']; ?></td>
-                                    <td><?php echo $u['nombre_carrera']; ?> <?php if($u['semestre']) echo "({$u['semestre']})"; ?></td>
                                     <td>
-                                        <button class="btn btn-sm btn-warning btn-edit" data-id="<?php echo $u['id']; ?>"><i class="fas fa-edit"></i></button>
+                                        <strong><?php echo htmlspecialchars($u['nombre']); ?></strong><br>
+                                        <small class="text-muted"><?php echo htmlspecialchars($u['correo']); ?></small>
+                                    </td>
+                                    <td><span class="badge badge-<?php echo ($u['rol']=='ADMIN')?'danger':(($u['rol']=='DOCENTE')?'warning':'primary'); ?>"><?php echo $u['rol']; ?></span></td>
+                                    <td>
+                                        <?php if($u['rol'] == 'ADMIN'): ?><span class="text-muted">-</span>
+                                        <?php else: ?>
+                                            <?php echo $u['nombre_carrera'] ?? '-'; ?>
+                                            <?php if($u['semestre']) echo " <span class='badge badge-light'>{$u['semestre']}</span>"; ?>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-sm btn-warning btn-edit" data-id="<?php echo $u['id']; ?>" title="Editar">
+                                            <i class="fas fa-pencil-alt"></i>
+                                        </button>
+                                        
+                                        <?php if($u['id'] != $_SESSION['usuario_id']): ?>
+                                        <form action="controllers/usuarios_controller.php" method="POST" style="display:inline;" onsubmit="return confirm('¿Está seguro de eliminar a este usuario?');">
+                                            <input type="hidden" name="accion" value="eliminar">
+                                            <input type="hidden" name="usuario_id" value="<?php echo $u['id']; ?>">
+                                            <button class="btn btn-sm btn-danger" title="Eliminar"><i class="fas fa-trash"></i></button>
+                                        </form>
+                                        <?php endif; ?>
                                     </td>
                                 </tr>
                                 <?php endforeach; ?>
@@ -125,7 +163,7 @@ require_once 'includes/header.php';
                     </div>
                     <div class="form-group"><label>Nueva Clave (Opcional)</label><input type="password" name="password" class="form-control"></div>
                 </div>
-                <div class="modal-footer"><button class="btn btn-warning">Guardar Cambios</button></div>
+                <div class="modal-footer"><button class="btn btn-warning">Actualizar</button></div>
             </form>
         </div>
     </div>
@@ -134,6 +172,7 @@ require_once 'includes/header.php';
 <?php require_once 'includes/footer.php'; ?>
 
 <script>
+// Lógica para mostrar/ocultar campos académicos
 function toggleFields(prefix) {
     const rol = $(`#${prefix}_rol`).val();
     const container = $(`#${prefix}_academic_fields`);
@@ -143,13 +182,14 @@ function toggleFields(prefix) {
         container.hide();
     } else if (rol === 'DOCENTE') {
         container.show();
-        semGroup.hide();
+        semGroup.hide(); // Docente tiene carrera pero NO semestre
     } else {
         container.show();
-        semGroup.show();
+        semGroup.show(); // Estudiante tiene ambos
     }
 }
 
+// Llenar modal de edición
 $('.btn-edit').click(function() {
     const id = $(this).data('id');
     fetch(`controllers/api_get_entity.php?entity=usuario&id=${id}`)
@@ -162,10 +202,12 @@ $('.btn-edit').click(function() {
             $('#edit_rol').val(data.rol);
             $('#edit_carrera').val(data.carrera_id);
             $('#edit_semestre').val(data.semestre);
-            toggleFields('edit');
+            
+            toggleFields('edit'); // Actualizar visibilidad según el rol cargado
             $('#modalEditar').modal('show');
         });
 });
 
+// Inicializar formulario de creación al cargar
 $(document).ready(() => toggleFields('create'));
 </script>
